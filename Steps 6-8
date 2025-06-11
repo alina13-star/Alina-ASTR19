@@ -1,0 +1,74 @@
+# 1️ Install packages
+!pip install astropy sep reproject
+
+# 2️ Import packages
+import numpy as np
+import matplotlib.pyplot as plt
+import sep
+from astropy.io import fits
+from astropy.visualization import simple_norm
+from reproject import reproject_interp
+from matplotlib.colors import Normalize
+import os
+
+# 3️ Load pre-downsampled JWST image (simulated small file)
+# For this example, let's assume your instructor gives you:
+#  'small_f090w.fits', 'small_f277w.fits', 'small_f444w.fits'
+
+with fits.open("small_f090w.fits") as hdul:
+    data = hdul[0].data.astype(np.float32)
+
+# 4️ Background subtraction
+bkg = sep.Background(data)
+data_sub = data - bkg.back()
+
+# 5️ Extract sources
+sep.set_extract_pixstack(1000000)
+objects = sep.extract(data_sub, thresh=5.0, err=bkg.globalrms)
+print("Number of sources detected:", len(objects))
+
+# 6️ Flux stats
+fluxes = objects['flux']
+mean_flux = np.mean(fluxes)
+median_flux = np.median(fluxes)
+std_flux = np.std(fluxes)
+print(f"Mean: {mean_flux}, Median: {median_flux}, Std: {std_flux}")
+max_flux = np.max(fluxes)
+max_flux_index = np.argmax(fluxes)
+max_flux_obj = objects[max_flux_index]
+sigma_away = (max_flux - mean_flux) / std_flux
+print(f"Largest flux: {max_flux} at ({max_flux_obj['x']}, {max_flux_obj['y']}) --> {sigma_away:.2f} sigma")
+
+# 7️ Reprojection function
+def reproject_to_f090w(file, ref_data, ref_header):
+    with fits.open(file) as hdul:
+        data = hdul[0].data
+        header = hdul[0].header
+
+    reproj, _ = reproject_interp((data, header), (ref_data, ref_header))
+    return reproj
+
+# Load reference again for reprojection
+with fits.open("small_f090w.fits") as hdul:
+    ref_data = hdul[0].data
+    ref_header = hdul[0].header
+
+# Reproject all bands
+img_r = reproject_to_f090w("small_f444w.fits", ref_data, ref_header)
+img_g = reproject_to_f090w("small_f277w.fits", ref_data, ref_header)
+img_b = ref_data  # f090w is reference
+
+
+# Normalize bands
+norm_r = Normalize()(img_r)
+norm_g = Normalize()(img_g)
+norm_b = Normalize()(img_b)
+
+# Build RGB image
+rgb = np.dstack([norm_r, norm_g, norm_b])
+plt.figure(figsize=(10, 10))
+plt.imshow(rgb, origin='lower')
+plt.title('3-Color NIRCam Image (Downsampled)')
+plt.axis('off')
+plt.savefig("ngc3324_3color_small.png", dpi=300)
+plt.show()
